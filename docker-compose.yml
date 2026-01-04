@@ -1,0 +1,70 @@
+version: "3.9"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# The Guardian Ingestor — Docker Compose
+#
+# Services
+#   postgres  : PostgreSQL 15 database (starts first)
+#   ingestor  : The Python ETL pipeline (waits for postgres, then runs)
+# ──────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── PostgreSQL Database ────────────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine          # lightweight Alpine-based image
+    container_name: guardian_postgres
+    environment:
+      POSTGRES_DB:       guardian
+      POSTGRES_USER:     guardian
+      POSTGRES_PASSWORD: guardian123
+    ports:
+      - "5432:5432"                    # expose so you can connect via DBeaver/pgAdmin
+    volumes:
+      - guardian_pgdata:/var/lib/postgresql/data   # data persists across restarts
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U guardian -d guardian"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # ── Python ETL Pipeline ────────────────────────────────────────────────────
+  ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: guardian_ingestor
+    image: guardian_ingestor:latest
+
+    environment:
+      # Switch the storage layer to PostgreSQL
+      DB_TYPE:      "postgres"
+      PG_HOST:      "postgres"         # Docker service name = hostname
+      PG_PORT:      "5432"
+      PG_DB:        "guardian"
+      PG_USER:      "guardian"
+      PG_PASSWORD:  "guardian123"
+      LOG_LEVEL:    "INFO"
+
+    volumes:
+      - guardian_logs:/app/logs        # persist log files
+
+    depends_on:
+      postgres:
+        condition: service_healthy     # wait until PostgreSQL is ready
+
+    restart: "no"                      # batch job — run once and exit cleanly
+
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: "256M"
+
+volumes:
+  guardian_pgdata:
+    driver: local
+  guardian_logs:
+    driver: local
